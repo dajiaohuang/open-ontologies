@@ -101,6 +101,10 @@ impl OntologyRegistry {
         // to unload/reload operations. Otherwise an unload can clear the graph
         // while a concurrent load is still waiting to publish its active slot.
         let _lifecycle = self.lifecycle_lock.lock().unwrap();
+        self.load_file_locked(path, opts)
+    }
+
+    fn load_file_locked(&self, path: &str, opts: LoadOptions) -> Result<LoadResult> {
         let path_obj = Path::new(path);
         if !path_obj.exists() {
             return Err(anyhow!("file not found: {}", path));
@@ -386,6 +390,11 @@ impl OntologyRegistry {
 
     /// Force recompile the active ontology from source (used by `onto_recompile`).
     pub fn recompile(&self) -> Result<LoadResult> {
+        let _lifecycle = self.lifecycle_lock.lock().unwrap();
+        self.recompile_active_locked()
+    }
+
+    fn recompile_active_locked(&self) -> Result<LoadResult> {
         let (path, name, auto_refresh) = {
             let active = self.active.lock().unwrap();
             let entry = active
@@ -393,7 +402,7 @@ impl OntologyRegistry {
                 .ok_or_else(|| anyhow!("no active ontology to recompile"))?;
             (entry.source_path.clone(), entry.name.clone(), entry.auto_refresh)
         };
-        self.load_file(
+        self.load_file_locked(
             &path,
             LoadOptions {
                 name: Some(name),
@@ -413,9 +422,10 @@ impl OntologyRegistry {
     ///   left completely untouched. This makes it safe to refresh background
     ///   ontologies without disturbing whatever is currently being queried.
     pub fn recompile_named(&self, name: &str) -> Result<LoadResult> {
+        let _lifecycle = self.lifecycle_lock.lock().unwrap();
         let active_name = self.active.lock().unwrap().as_ref().map(|e| e.name.clone());
         if active_name.as_deref() == Some(name) {
-            return self.recompile();
+            return self.recompile_active_locked();
         }
         let entry = self
             .cache
